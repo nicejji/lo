@@ -7,6 +7,7 @@ export const isDigitCh = (char: string) =>
 	(char >= "0" && char <= "9") || char === ".";
 
 export const isAlphaNumCh = (char: string) => {
+	if (char === "_") return true;
 	const code = char.charCodeAt(0);
 	return (
 		(code > 47 && code < 58) ||
