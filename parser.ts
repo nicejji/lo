@@ -9,10 +9,14 @@ import {
 } from "./helpers";
 import type {
 	AssignmentToken,
+	ConditionToken,
 	Expression,
 	IdentToken,
 	LiteralToken,
 	OpToken,
+	ProcedureCall,
+	ProcedureToken,
+	RepeatToken,
 	Token,
 } from "./runtime";
 
@@ -29,9 +33,18 @@ const wrapInExpression = (tokens: Token[]): Expression => {
 	return { type: "EXPRESSION", tokens };
 };
 
-export const parse = (src: string): Expression => {
+export const parse = (src: string): [Expression, number] => {
 	let tokens: Token[] = [];
 	let index = 0;
+
+	const parseKeyword = <W extends string>(word: W) => {
+		skipSpaces();
+		for (let i = 0; i < word.length; i++) {
+			if (word[i] !== src[index + i]) return null;
+		}
+		index += word.length;
+		return word;
+	};
 
 	const parseWhile = (test: CharTest) => {
 		let parsed = "";
@@ -65,12 +78,18 @@ export const parse = (src: string): Expression => {
 	};
 
 	const parseExpression = (): Expression | null => {
-		const parsed = parseWhile((ch) => ch === "(");
-		if (parsed === null) return null;
-		const expSrc = parseWhile((ch) => ch !== ")");
-		if (!expSrc) return { type: "EXPRESSION", tokens: [] };
-		index += 1;
-		return parse(expSrc);
+		const start = parseKeyword("(");
+		if (!start) return null;
+		let [exp, offset] = parse(src.slice(index));
+		index += offset;
+		return exp;
+	};
+
+	const parseExpClose = (): Expression | null => {
+		const start = parseKeyword(")");
+		if (!start) return null;
+
+		return wrapInExpression(tokens);
 	};
 
 	const parseAssignment = (): AssignmentToken | null => {
@@ -81,21 +100,85 @@ export const parse = (src: string): Expression => {
 		const right = parseNext();
 
 		if (!right)
-			throw "ParseError: Expected IDENT | LITERAL | EXPRESSION after '='";
+			throw "ParseError: Expected IDENT | LITERAL | EXPRESSION | PROC | PROC_CALL after '='";
 		if (
 			right.type !== "IDENT" &&
 			right.type !== "LITERAL" &&
-			right.type !== "EXPRESSION"
+			right.type !== "EXPRESSION" &&
+			right.type !== "PROCEDURE" &&
+			right.type !== "PROCEDURE_CALL" &&
+			right.type !== "CONDITION_TOKEN"
 		)
-			throw "ParseError: Expected IDENT | LITERAL | EXPRESSION after '='";
+			throw "ParseError: Expected IDENT | LITERAL | EXPRESSION | PROC | PROC_CALL | COND after '='";
 		return { type: "ASSIGNMENT", left, right };
 	};
 
+	const parseRepeat = (): RepeatToken | null => {
+		const start = parseKeyword("repeat");
+		if (!start) return null;
+		const times = parseNext();
+		if (!times) throw "ParseError: Expected EXPRESSION after 'repeat'";
+		if (times.type !== "EXPRESSION")
+			throw "ParseError: Expected EXPRESSION after 'repeat'";
+		const body = parseNext();
+		if (!body) throw "ParseError: Expected EXPRESSION inside 'repeat' body";
+		if (body.type !== "EXPRESSION")
+			throw "ParseError: Expected EXPRESSION inside 'repeat' body";
+		return { type: "REPEAT_TOKEN", body, times };
+	};
+
+	const parseCondition = (): ConditionToken | null => {
+		const start = parseKeyword("if");
+		if (!start) return null;
+		const condition = parseNext();
+		if (!condition) throw "ParseError: Expected EXPRESSION after 'if'";
+		if (condition.type !== "EXPRESSION")
+			throw "ParseError: Expected EXPRESSION after 'if'";
+		const trueBlock = parseNext();
+		if (!trueBlock)
+			throw "ParseError: Expected EXPRESSION after 'if' condition";
+		if (trueBlock.type !== "EXPRESSION")
+			throw "ParseError: Expected EXPRESSION after 'if' condition";
+		const falseBlock = parseNext();
+		if (!falseBlock)
+			throw "ParseError: Expected EXPRESSION after 'if' true block";
+		if (falseBlock.type !== "EXPRESSION")
+			throw "ParseError: Expected EXPRESSION after 'if' true block";
+		return {
+			type: "CONDITION_TOKEN",
+			condition,
+			true: trueBlock,
+			false: falseBlock,
+		};
+	};
+
+	const parseProc = (): ProcedureToken | null => {
+		const start = parseKeyword("proc");
+		if (!start) return null;
+		const body = parseNext();
+		if (!body) throw "ParseError: Expected EXPRESSION after 'proc <name>'";
+		if (body.type !== "EXPRESSION")
+			throw "ParseError: Expected EXPRESSION after 'proc <name>'";
+		return { type: "PROCEDURE", body, name: "" };
+	};
+
+	const parseProcCall = (): ProcedureCall | null => {
+		const start = parseKeyword("@");
+		if (!start) return null;
+		const name = parseNext();
+		if (!name) throw "ParseError: Expected IDENT after 'proc'";
+		if (name.type !== "IDENT") throw "ParseError: Expected IDENT after 'proc'";
+		return { type: "PROCEDURE_CALL", name: name.value };
+	};
+
 	const parseNext = (): Token | null => {
-		skipSpaces();
 		return (
-			parseOp() ??
+			parseCondition() ??
+			parseRepeat() ??
+			parseProc() ??
+			parseProcCall() ??
 			parseAssignment() ??
+			parseOp() ??
 			parseLiteral() ??
 			parseIdent() ??
 			parseExpression()
@@ -103,11 +186,16 @@ export const parse = (src: string): Expression => {
 	};
 
 	while (index < src.length) {
-		const nextToken = parseNext();
+		skipSpaces();
 
+		const parsed = parseExpClose();
+		if (parsed) return [parsed, index];
+
+		const nextToken = parseNext();
 		if (!nextToken) break;
+
 		tokens.push(nextToken);
 	}
 
-	return wrapInExpression(tokens);
+	return [wrapInExpression(tokens), index];
 };

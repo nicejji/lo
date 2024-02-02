@@ -1,3 +1,27 @@
+export type ConditionToken = {
+	type: "CONDITION_TOKEN";
+	condition: Expression;
+	true: Expression;
+	false: Expression;
+};
+
+export type RepeatToken = {
+	type: "REPEAT_TOKEN";
+	times: Expression;
+	body: Expression;
+};
+
+export type ProcedureToken = {
+	type: "PROCEDURE";
+	name: string;
+	body: Expression;
+};
+
+export type ProcedureCall = {
+	name: string;
+	type: "PROCEDURE_CALL";
+};
+
 export type IdentToken = {
 	type: "IDENT";
 	value: string;
@@ -17,7 +41,13 @@ export type OpToken = {
 export type AssignmentToken = {
 	type: "ASSIGNMENT";
 	left: IdentToken;
-	right: Expression | LiteralToken | IdentToken;
+	right:
+		| Expression
+		| LiteralToken
+		| IdentToken
+		| ProcedureToken
+		| ProcedureCall
+		| ConditionToken;
 };
 
 export type Expression = {
@@ -26,14 +56,35 @@ export type Expression = {
 };
 
 export type Token =
+	| ConditionToken
 	| IdentToken
 	| LiteralToken
 	| OpToken
 	| AssignmentToken
-	| Expression;
+	| Expression
+	| RepeatToken
+	| ProcedureToken
+	| ProcedureCall;
 
-export const run = (token: Token, memory: Map<string, number>): number => {
+export const run = (
+	token: Token,
+	memory: Map<string, number>,
+	proc_memory: Map<string, Expression>,
+): number => {
 	switch (token.type) {
+		case "CONDITION_TOKEN": {
+			const cond_value = run(token.condition, memory, proc_memory);
+			if (cond_value >= 0) return run(token.true, memory, proc_memory);
+			return run(token.false, memory, proc_memory);
+		}
+		case "REPEAT_TOKEN": {
+			const times = run(token.times, memory, proc_memory);
+			let result = NaN;
+			for (let i = 0; i < times; i++) {
+				result = run(token.body, memory, proc_memory);
+			}
+			return result;
+		}
 		case "EXPRESSION": {
 			const tokens = [...token.tokens];
 
@@ -56,12 +107,19 @@ export const run = (token: Token, memory: Map<string, number>): number => {
 				if (!right || right.type === "OP") {
 					throw `RuntimeError: Expected IDENT | LITERAL | EXPRESSION after '${op.code}'`;
 				}
-				const value = op.exec(run(left, memory), run(right, memory));
+				const value = op.exec(
+					run(left, memory, proc_memory),
+					run(right, memory, proc_memory),
+				);
 
 				tokens.splice(opIndex - 1, 3, { type: "LITERAL", value });
 			}
 
-			return run(tokens.at(-1) ?? { type: "LITERAL", value: NaN }, memory);
+			let last = NaN;
+			for (const token of tokens) {
+				last = run(token, memory, proc_memory);
+			}
+			return last;
 		}
 
 		case "LITERAL":
@@ -72,8 +130,22 @@ export const run = (token: Token, memory: Map<string, number>): number => {
 		}
 
 		case "ASSIGNMENT": {
-			memory.set(token.left.value, run(token.right, memory));
+			if (token.right.type === "PROCEDURE") {
+				proc_memory.set(token.left.value, token.right.body);
+				return NaN;
+			}
+			memory.set(token.left.value, run(token.right, memory, proc_memory));
 			return memory.get(token.left.value) ?? NaN;
+		}
+
+		case "PROCEDURE": {
+			return NaN;
+		}
+
+		case "PROCEDURE_CALL": {
+			const exp = proc_memory.get(token.name);
+			if (!exp) return NaN;
+			return run(exp, memory, proc_memory);
 		}
 
 		case "OP":
