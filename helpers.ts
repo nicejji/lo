@@ -6,7 +6,9 @@ export const isOpCode = (char: string): char is OpToken["code"] => {
 export const isDigitCh = (char: string) =>
 	(char >= "0" && char <= "9") || char === ".";
 
+const cyrillicPattern = /^[\u0400-\u04FF]+$/;
 export const isAlphaNumCh = (char: string) => {
+	if (cyrillicPattern.test(char)) return true;
 	if (char === "_") return true;
 	const code = char.charCodeAt(0);
 	return (
@@ -20,3 +22,5 @@ export const add = (left: number, right: number) => left + right;
 export const sub = (left: number, right: number) => left - right;
 export const mul = (left: number, right: number) => left * right;
 export const div = (left: number, right: number) => left / right;
+
+export const isSpaceChar = (ch: string) => /\s/.test(ch);
